@@ -3,6 +3,7 @@ package multitask
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 type ErrCounter struct {
@@ -14,7 +15,7 @@ func Run(tasks []func() error, tasksInParallelCount int, maxErrorsCount int) {
 
 	tasksChan := make(chan func() error, 100)
 
-	errCounter := ErrCounter{}
+	var errCounter int32
 
 	var wg sync.WaitGroup
 	wg.Add(tasksInParallelCount)
@@ -27,7 +28,7 @@ func Run(tasks []func() error, tasksInParallelCount int, maxErrorsCount int) {
 	go func() {
 		defer close(tasksChan)
 		for _, task := range tasks {
-			if errCounter.count >= maxErrorsCount {
+			if errCounter >= int32(maxErrorsCount) {
 				return
 			}
 			tasksChan <- task
@@ -38,30 +39,23 @@ func Run(tasks []func() error, tasksInParallelCount int, maxErrorsCount int) {
 
 }
 
-func runner(id int, tasksChan chan func() error, errCounter *ErrCounter, maxErrors int, wg *sync.WaitGroup) {
+func runner(id int, tasksChan chan func() error, errCounter *int32, maxErrors int, wg *sync.WaitGroup) {
 	defer wg.Done()
 	fmt.Printf("%d) runner start....\n", id)
-	for {
+	for task := range tasksChan {
 
-		if errCounter.count >= maxErrors {
+		if *errCounter >= int32(maxErrors) {
 			return
 		}
 
-		task, ok := <-tasksChan
-		if ok {
-			fmt.Printf("%d) run task...\n", id)
-			err := task()
-			if err != nil {
-				fmt.Printf("%d) Error!\n", id)
-				errCounter.mutex.Lock()
-				errCounter.count++
-				errCounter.mutex.Unlock()
-				return
-			} else {
-				fmt.Printf("%d) OK!\n", id)
-			}
+		fmt.Printf("%d) run task...\n", id)
+		err := task()
+
+		if err != nil {
+			fmt.Printf("%d) Error!\n", id)
+			atomic.AddInt32(errCounter, 1)
 		} else {
-			return
+			fmt.Printf("%d) OK!\n", id)
 		}
 
 	}
